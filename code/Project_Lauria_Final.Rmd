@@ -1,0 +1,1773 @@
+---
+title: "Lauria_project"
+author: "Gloria Lugoboni"
+date: "2024-03-06"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+
+# Project Network-based data analysis
+
+## Pre-processing
+GSE199967 is a dataset obtained from GEO. The data are obtained via expression profiling by array. Specifically, we are looking at transcriptional profiling of tumor tissues and normal tissues from ESCA. The overall design is: Tumor tissues vs normal tissues, wth a total of 21 biological replicates per condition.
+
+Loading libraries
+```{r}
+library(GEOquery) # if not present install it with BiocManager
+```
+Importing the data 
+```{r}
+# Retrive the file of our choosen GEO dataset
+gse <- getGEO('GSE199967', destdir= '.', getGPL = F)
+
+# Since gse is a list of dataset and we need only the first one, we extract the first
+gse <- gse[[1]]
+# gse is a class Large ExpressionSet
+# View(gse) -> we can see that we have various data, exprimentData, assayData, phenoData (sample specific data), featureData, annotation, protocolData and classVersion 
+
+# the function exprs extract the expression data
+ex <- exprs(gse)
+# or 
+# ex <- gse@assayData[['exprs']] 
+# First 21 are NORMAL, last 21 are TUMOR
+```
+
+Initial analysis (per vedere se normalizzare o meno)
+```{r}
+dim(ex) # 42 sample, 41000 genes
+# colnames(ex) -> ids of the samples
+# rownames(ex) -> gene name, here in RefSeq if I'm not wrong 
+boxplot(ex, main = 'Boxplot of initial data')
+
+```
+Let's apply the logarithm and recompute the boxplot
+```{r}
+ex2<-log(ex)
+ex2 <- na.omit(as.matrix(ex2))
+boxplot(ex2, main = 'Boxplot of initial data in logarithm')
+```
+
+Let's try to normalize the data and see if there are differences
+
+```{r}
+# MEDIAN NORMALIZATION
+channel.medians=apply(log(ex),2,median)
+normalized.log.ex=sweep(log(ex),2,channel.medians,"-")
+
+# boxplot post median normalization on ex
+boxplot(normalized.log.ex, main = 'Boxplot of initial data after median normalization')
+
+#SCALE NORMALIZATION
+# compute MAD, then divide by column
+medians=apply(ex,2,median)
+Y=sweep(ex,2,medians,"-")
+mad=apply(abs(Y),2,median)
+const=prod(mad)^(1/length(mad))
+scale.normalized.ex=sweep(ex,2,const/mad,"*")
+
+# simpler approach
+scale.normalized.ex <- scale(ex)
+
+# boxplot post scale normalization on ex
+boxplot(scale.normalized.ex, main = 'Boxplot of initial data after scale normalization')
+
+```
+
+
+I will use the original data, it is quite good, I checked if it needed normalization but no differences were outlied.
+
+
+### PCA ###
+I primi 21 samples sono controlli (in azzurro), gli altri 21 sono tumori (in rosso)
+```{r}
+# PCA
+pca <- prcomp(t(ex))
+summary(pca) # get the summary of the PCA, we get a table in which each column is a principal components and we have information on the standard deviation and the variation, etc
+screeplot(pca) # this plot show the variance explained by the first circa 10 components
+
+# draw PCA plot
+group <- c(rep("cadetblue1",21), rep("red",21) )
+plot(pca$x[,1], pca$x[,2], xlab="PCA1", ylab="PCA2", main="PCA for components 1 and 2", type="p", pch=10, col=group)
+text(pca$x[,1], pca$x[,2], rownames(pca$data), cex=0.75)
+
+
+```
+
+Now we look at the PCA with PLOTLY package
+
+```{r}
+
+# install.packages("plotly")
+library(plotly)
+components<-pca[["x"]]
+components<-data.frame(components)
+type<-c(rep("Controls", 21), rep("Tumors",21))
+components<-cbind(components, type )
+fig<-plot_ly(components, x=~PC1, y=~PC2, color=type,colors=c('cadetblue1', 'red') ,type='scatter',mode='markers')
+fig
+
+fig2<-plot_ly(components, x=~PC1, y=~PC2, z=~PC3,color=type ,colors=c('cadetblue1', 'red') ,mode='markers',marker = list(size = 4)) #  %>%
+fig2
+
+
+fig3<-plot_ly(components, x=~PC1, y=~PC3, color=type,colors=c('cadetblue1', 'red') ,type='scatter',mode='markers') #  %>%
+#layout(legend = list(title = list(text = 'color')))
+fig3
+
+
+```
+
+DA INSERIRE NEL REPORT ALEMNO UNA PCA, 2D, 3D O ENTRAMBE!
+
+### UMAP ###
+Alla fine questi grafici non finiscono nel report
+
+```{r}
+library(umap)
+```
+
+Let's try a Umap 2D
+```{r}
+umap_data <- umap::umap(t(ex), 
+                        n_neighbors = sqrt(dim(t(ex))[1]),#or the square root of the rows 
+                        min_dist = 0.1,         
+                        metric = "euclidean",    #you can change it
+                        n_components = 2) #used the default ones! 
+
+umap_df <- data.frame(umap_data$layout) %>% tibble::rownames_to_column('Samples')
+umap_df$type <- c(rep("Control", 21), rep("Tumor", 21))
+
+library(plotly)
+
+figUmap <- plot_ly(umap_df, 
+                 x = ~X1, y = ~X2, color = umap_df$type,
+                 colors = c('cadetblue1', 'red'),   
+                 mode = 'markers',
+                 size=1)
+
+# Display the 2D scatter plot
+figUmap
+```
+
+Let's try at 3D 
+
+```{r}
+umap_data_3D <- umap::umap(t(ex), 
+                        n_neighbors = sqrt(dim(t(ex))[1]),
+                      #or the square root of the rows, provato anche con 5 fa pena, anche 15 abbastanza pena  
+                        min_dist = 0.1,         
+                        metric = "euclidean",    #you can change it
+                        n_components = 3) #used the default ones! 
+
+umap_df_3D <- data.frame(umap_data_3D$layout) %>% tibble::rownames_to_column('Samples')
+umap_df_3D$type <- group
+
+figUmap_3D <- plot_ly(umap_df_3D, 
+                 x = ~X1, y = ~X2, z=~X3, color = umap_df_3D$type,
+                 colors = c("#003f5c","#ffa600"),   
+                 mode = 'markers',
+                 size=1) %>% layout(title = 'Umap 1 control-tumors 3D')
+
+# Display the 2D scatter plot
+figUmap_3D
+```
+
+
+### CLUSTERING ###
+
+Now, let's move to data clustering. Clustering is a technique for finding **similarity groups** in data, called **clusters**. I.e.,it groups data instances that are similar to (near) each other in one cluster and data instances that are very different (far away) from each other into different clusters.
+
+Clustering is often called an **unsupervised learning** method as no class values denoting an a priori grouping of the data instances are given, which is the case in supervised learning.
+
+**METHOD 1**: K-means
+
+- K-means is a partitional clustering algorithm
+- You need to be able to compute a distance between points (distance
+matrix), i.e. euclidean distance
+- Let the set of data points (or instances) D be $\{x_1, x_2 , ..., x_n\}$, where $xi = (x_{i1}
+, x_{i2}
+, ..., x_{ir})$ is a **vector** in a real-valued space $X \subseteq R^r$, and $r$ is the number of attributes (dimensions) in the data.
+- The k-means algorithm partitions the given data into k clusters.
+    - Each cluster has a cluster **center**, called **centroid**.
+    - k is specified by the user.
+    
+Given k, the k-means algorithm works as follows:
+1. Randomly choose k data points (**seeds**) to be the initial **centroids**, cluster centers
+2. Assign each data point to the closest **centroid**
+3. Re-compute the **centroids** using the current cluster memberships.
+4. If a convergence criterion is not met, go to (2.).
+
+```{r}
+## K-MEANS
+# install.packages("ggpubr")
+library(ggpubr)
+library(factoextra)
+
+k <- 2 # I need to choose K a priori, but i know that i have tumor vs control data
+kmeans_result <- kmeans(t(ex), k)
+table(kmeans_result$cluster)
+
+# Note that the cluster visualization is not trivial (space of 7815 dimensions!). We use the
+# plot function in the ‘useful’ package that performs a dimensionality reduction using PCA
+
+#plot(kmeans_result, data=t(ex)) #+ geom_text(aes(label=colnames(ex)),hjust=0,vjust=0)
+
+# plot using factoextra package
+fviz_cluster(kmeans_result, data = t(ex),
+             palette = c("#2E9FDF", "#E7B800", "green", "red"), 
+             geom = "point",
+             ellipse.type = "convex", 
+             ggtheme = theme_bw()
+             )
+# plot using ggpubr package
+
+# Coordinates of individuals
+ind.coord <- as.data.frame(get_pca_ind(pca)$coord)
+# Add clusters obtained using the K-means algorithm
+ind.coord$cluster <- factor(kmeans_result$cluster)
+# Add type groups (Controls or Tumoral samples) from the original data set
+type<-c(rep("Controls", 21), rep("Tumors", 21))
+ind.coord$Type <- type
+
+# Data inspection
+head(ind.coord)
+# Percentage of variance explained by dimensions
+eigenvalue <- round(get_eigenvalue(pca), 1)
+variance.percent <- eigenvalue$variance.percent
+head(eigenvalue)
+
+# Visualize k-means clusters
+# Color individuals according to the cluster groups
+# Change point shapes according to the Species groups (ground truth of grouping)
+# Add concentration ellipses
+# Add cluster centroid using the stat_mean() [ggpubr] R function
+
+library(ggpubr)
+
+ggscatter(
+  ind.coord, x = "Dim.1", y = "Dim.2", 
+  color = "cluster", palette = "npg", ellipse = TRUE, ellipse.type = "convex",
+  shape = "Type", size = 1.5,  legend = "right", ggtheme = theme_bw(),
+  xlab = paste0("Dim 1 (", variance.percent[1], "% )" ),
+  ylab = paste0("Dim 2 (", variance.percent[2], "% )" )
+) +
+  stat_mean(aes(color = cluster), size = 4)
+
+
+```
+
+METHOD 2: Hierarchical
+
+**Hierarchical Clustering** is another clustering method based on a distance matrix.
+
+It produces a nested sequence of clusters, a **tree**, also called **Dendrogram**.
+
+There are two types of hierarchical clustering:
+**1. Agglomerative (bottom up) clustering**: It starts with one cluster for each data points
+
+- merges the most similar (or nearest) pair of clusters
+- stops when all the data points are merged into a single cluster (i.e., the root cluster).
+
+**2. Divisive (top down) clustering**: It starts with all data points in one cluster, the root
+
+- Splits the root into a set of child clusters. Each child cluster is recursively divided further
+- stops when only singleton clusters of individual data points remain, i.e., each cluster with only a single point
+
+
+Qui sotto provo altri k per il clustering perchè faceva cagare con 2 gruppi. Tendo sia con k=2 che k=6 perchè i conytrolli sono clusterizzati insieme e anche i tumori.
+NB. Provo due misure di distanza ma va comunqu schifo.
+
+```{r}
+# HIERARCHICAL
+dist_matrix <- dist(t(ex))
+dist_matrix2<-dist(t(ex), method="euclidean")
+hc_result <- hclust(dist_matrix, method = "ave")
+hc_result2<-hclust(dist_matrix2, method = "complete")
+k <- 2
+groups <- cutree(hc_result, k=k)
+groups2<-cutree(hc_result2, k=k)
+table(groups)
+table(groups2)
+plot(hc_result, hang <- -1, labels=groups)
+rect.hclust(hc_result, k = k, which = NULL, x = NULL, h = NULL, border = 2, cluster = NULL) # red boxes to show groups
+plot(hc_result2, hang <- -1, labels=type) # plotto usando il types e non i gruppi ricavati dal clustering, cosi capisco se clusterizzo i controlli con i controlli o meno
+rect.hclust(hc_result2, k = k, which = NULL, x = NULL, h = NULL, border = 2, cluster = NULL) # red boxes to show groups
+k <- 6
+groups <- cutree(hc_result, k=k)
+groups2<-cutree(hc_result2, k=k)
+table(groups)
+table(groups2)
+plot(hc_result, hang <- -1, labels=groups)
+rect.hclust(hc_result, k = k, which = NULL, x = NULL, h = NULL, border = 2, cluster = NULL) # red boxes to show groups
+plot(hc_result2, hang <- -1, labels=type) # plotto usando il types e non i gruppi ricavati dal clustering, cosi capisco se clusterizzo i controlli con i controlli o meno
+rect.hclust(hc_result2, k = k, which = NULL, x = NULL, h = NULL, border = 2, cluster = NULL) # red boxes to show groups
+```
+
+NEL REPORT CI VANNO ALMENO UN GRAFICO DI CLUSTERING GERARCHICO ED UNO DI CLUSTERING K-MEANS.
+
+### LIMMA - Features selections ###
+
+```{r}
+if (!("limma" %in% installed.packages())) {
+  # Install this package if it isn't installed yet
+  BiocManager::install("limma", update = FALSE)
+}
+if (!("EnhancedVolcano" %in% installed.packages())) {
+  # Install this package if it isn't installed yet
+  BiocManager::install("EnhancedVolcano", update = FALSE)
+}
+
+#Attach the packages we need for this analysis.
+# Attach the library
+library(limma)
+
+# We will need this so we can use the pipe: %>%
+library(magrittr)
+
+# We'll use this for plotting
+library(ggplot2)
+
+# The jitter plot we make later on with geom_jitter() involves some randomness. As is good practice when our analysis involves randomness, we will set the seed.
+set.seed(12345)
+
+
+## The simplest possible single channel experiment is to compare two groups. We wish to compare wild type (Wt) samples with mutant (cancerogenous) samples.
+# We create a design matrix which includes separate coefficients for wild type and mutant samples and then extract the difference as a contrast
+group <- c(rep("Controls", 21), rep("Tumors",21)) # classification, in order
+design <- model.matrix(~0+group)
+colnames(design) <- c("Controls","Tumors")
+rownames(design)<-colnames(exprs(gse))
+
+# We will use the lmFit() function from the limma package to test each gene for differential expression between the two groups using a linear model. After fitting our data to the linear model, in this example we apply empirical Bayes smoothing with the eBayes() function.
+# Differentially expressed genes can be found by
+# Apply linear model to data
+fit <- lmFit(exprs(gse), design)
+cont.matrix <- makeContrasts(contrasts = "Tumors-Controls", levels=design) # i want the up and down reg in tumors respect to contrasts
+fit2 <- contrasts.fit(fit, cont.matrix)
+# Apply empirical Bayes to smooth standard errors
+fit2 <- eBayes(fit2)
+# Because we are testing many different genes at once, we also want to perform some multiple test corrections, which we will do with the Benjamini-Hochberg method while making a table of results with topTable(). The topTable() function default is to use Benjamini-Hochberg but this can be changed to a different method using the adjust.method argument.
+stats<-topTable(fit2, adjust="BH", p.value=0.01, lfc=1.5, number=Inf)
+head(stats)
+all_deg<-topTable(fit2, adjust="BH", number=Inf)
+stats$Type<-c(rep("+",265))
+stats$Type[stats$logFC<0]="-"
+# By default, results are ordered by largest B (the log odds value) to the smallest, which means your most differentially expressed genes should be toward the top.
+
+# To test if these results make sense, we can make a plot of one of top genes. Let’s try extracting the data for A_32_P108938 and set up its own data frame for plotting purposes.
+library(tidyverse)
+top_gene_df <- exprs(gse)
+top_gene_df<-data.frame(top_gene_df[rownames(top_gene_df)=="A_32_P108938"])
+rownames(top_gene_df)<-colnames(exprs(gse))
+colnames(top_gene_df)<-c("A_32_P108938")
+top_gene_df$Group<-group
+# We plot to see if one of the gene identified above (with limma) is different in controls and tumors
+ggplot(top_gene_df, aes(x = group, y = A_32_P108938, color = group)) +
+  geom_jitter(width = 0.2, height = 0) + # We'll make this a jitter plot
+  theme_classic() # This makes some aesthetic changes
+# These results make sense. The tumor group samples have much higher expression values for A_32_P108938 than the control samples do.
+## NB Here i choose an overexpressed gene (log FC)>1, so I expected to see the tumors overexpressed for this gene
+
+# We’ll use the EnhancedVolcano package’s main function to plot our data
+
+EnhancedVolcano::EnhancedVolcano(all_deg,
+  lab = rownames(all_deg), # This has to be a vector with our labels we want for our genes -> so our gene names
+  x = "logFC", # This is the column name in `stats` that contains what we want on the x axis
+  y = "adj.P.Val", # This is the column name in `stats` that contains what we want on the y axis
+  FCcutoff = 1,
+  title = 'Tumor vs Controls',
+  pointSize=1.0,
+  selectLab=c(" "),
+  col=c('gray','gray', 'gray','darkgreen'),
+  colAlpha=1,
+  legendLabels=c('Not sig.','Log (base 2) FC','p-value',
+      'p-value & Log (base 2) FC'),
+    legendPosition = 'right',
+    legendLabSize = 16,
+    legendIconSize = 5.0
+)
+  # The default cut-off for log2FC is >|2|; the default cut-off for P value is 10e-6.
+
+
+## The differentially expressed genes are in stat
+# extract the DEGs
+selected<-ex[rownames(ex) %in% rownames(stats),]
+
+```
+
+IO METTO IL VULCANO PLOT NEL REPORT
+
+### Let's retry all the analysis but with LIMMA data: PCA, clustering and add random forest ###
+
+To skip if not necessary -> i just had fun looking at the difference in teh results. Still bad results for h-clust :(
+
+```{r}
+
+pca2 <- prcomp(t(selected))
+summary(pca2) # get the summary of the PCA, we get a table in which each column is a principal components and we have information on the standard deviation and the variation, etc
+screeplot(pca2) # this plot show the variance explained by the first 
+components2<-pca2[["x"]]
+components2<-data.frame(components2)
+#type<-c(rep("Controls", 21), rep("Tumors",21))
+components2<-cbind(components2, type )
+fig4<-plot_ly(components2, x=~PC1, y=~PC2, color=type,colors=c('cadetblue1', 'red') ,type='scatter',mode='markers')
+fig4
+
+fig5<-plot_ly(components2, x=~PC1, y=~PC2, z=~PC3,color=type ,colors=c('cadetblue1', 'red') ,mode='markers',marker = list(size = 4)) #  %>%
+fig5
+
+
+
+```
+
+```{r}
+## K-MEANS
+# install.packages("ggpubr")
+library(ggpubr)
+library(factoextra)
+
+k <- 2 # I need to choose K a priori, but i know that i have tumor vs control data
+kmeans_result <- kmeans(t(selected), k)
+table(kmeans_result$cluster)
+
+# Note that the cluster visualization is not trivial (space of 7815 dimensions!). We use the
+# plot function in the ‘useful’ package that performs a dimensionality reduction using PCA
+
+#plot(kmeans_result, data=t(ex)) #+ geom_text(aes(label=colnames(ex)),hjust=0,vjust=0)
+
+# plot using factoextra package
+fviz_cluster(kmeans_result, data = t(selected),
+             palette = c("#2E9FDF", "#E7B800", "green", "red"), 
+             geom = "point",
+             ellipse.type = "convex", 
+             ggtheme = theme_bw()
+             )
+# plot using ggpubr package
+
+# Coordinates of individuals
+ind.coord <- as.data.frame(get_pca_ind(pca2)$coord)
+# Add clusters obtained using the K-means algorithm
+ind.coord$cluster <- factor(kmeans_result$cluster)
+# Add type groups (Controls or Tumoral samples) from the original data set
+ind.coord$Type <- type
+# Data inspection
+head(ind.coord)
+# Percentage of variance explained by dimensions
+eigenvalue <- round(get_eigenvalue(pca2), 1)
+variance.percent <- eigenvalue$variance.percent
+head(eigenvalue)
+
+# Visualize k-means clusters
+# Color individuals according to the cluster groups
+# Change point shapes according to the Species groups (ground truth of grouping)
+# Add concentration ellipses
+# Add cluster centroid using the stat_mean() [ggpubr] R function
+
+library(ggpubr)
+
+ggscatter(
+  ind.coord, x = "Dim.1", y = "Dim.2", 
+  color = "cluster", palette = "npg", ellipse = TRUE, ellipse.type = "convex",
+  shape = "Type", size = 1.5,  legend = "right", ggtheme = theme_bw(),
+  xlab = paste0("Dim 1 (", variance.percent[1], "% )" ),
+  ylab = paste0("Dim 2 (", variance.percent[2], "% )" )
+) +
+  stat_mean(aes(color = cluster), size = 4)
+
+```
+
+
+# MACHINE LEARNING METHODS #
+### RANDOM FOREST ###
+
+Tunning algorithm is important in bulding modeling. In random forest model, you can not pre-understand your result because your model are randomly processing. Tunning algorithm will help you control training proccess and gain better result. In this study, we will focus on two main tunning parameters in random forest model is mtry and ntree. Beside, there are many other method but these two parameters perhaps most likely have biggest affect to model accuracy.
+
+mtry: Number of variable is randomly collected to be sampled at each split time.
+
+ntree: Number of branches will grow after each time split.
+
+
+#### Accuracy and Kappa
+These are the default metrics used to evaluate algorithms on binary and multi-class classification datasets in caret.
+
+Accuracy is the percentage of correctly classifies instances out of all instances. It is more useful on a binary classification than multi-class classification problems because it can be less clear exactly how the accuracy breaks down across those classes (e.g. you need to go deeper with a confusion matrix).
+
+Kappa or Cohen’s Kappa is like classification accuracy, except that it is normalized at the baseline of random chance on your dataset. It is a more useful measure to use on problems that have an imbalance in the classes (e.g. 70-30 split for classes 0 and 1 and you can achieve 70% accuracy by predicting all instances are for class 0).
+
+SUPER IMPORTANT TO EXTRACT THE VALUE OF MTRY using the command tuneRF
+
+```{r}
+# load data
+# BiocManager::install("ALL"); 
+# library("ALL")
+# data(ALL)
+# keep only 30 arrays JUST for computational convenience
+e.mat <- 2^(selected) # we need a large expressionSet
+# Genefilter package is very useful to preprocess data
+# here we remove genes whose value is not > 0 in at least 20% of the samples
+# filter genes on raw scale, then return to log scale;
+#BiocManager::install("genefilter");
+library("genefilter")
+ffun <- filterfun(pOverA(0.20,0.0))
+t.fil <- genefilter(e.mat,ffun)
+small.eset <- log2(e.mat[t.fil,])
+# Alternative simpler method if you don’t need the complexity of genefilter
+small.eset <- log2(na.omit(e.mat))
+dim(small.eset) # 265 genes, 42 arrays (21 Normal and 21 Controls)
+group <- c(rep("Controls", 21), rep("Tumors",21)) # classification, in order
+# Build RF
+# BiocManager::install("randomForest")
+library(randomForest)
+
+tuneRF(x=t(small.eset), y=as.factor(group)) ####### SUPER IMPORTANT TO EXTRACT THE VALUE OF MTRY BASED ON
+rf <- randomForest(x=t(small.eset), y=as.factor(group), ntree=500, mtry =32 ) # fa bootstrapping
+#rf2 <- randomForest(x=t(small.eset), y=as.factor(group), ntree=1000)
+#rf3 <- randomForest(x=t(small.eset), y=as.factor(group), ntree=1000, mtry=101)
+# a trivial test
+predict(rf, t(small.eset)) # da le prediction, quindi se sono stati catalogati come tumori o come controlli
+# useful graphs
+plot(rf)
+#plot(rf2)
+#plot(rf3)
+imp <- importance(rf)
+impsor <- sort(imp[, 1], decreasing=TRUE)
+plot(impsor) 
+```
+
+THE FOUND MTRY NEED TO GO IN THE METHODS FOR TEH REPORT
+
+Heatmap
+
+```{r}
+# Look at variable importance
+imp.temp <- abs(rf$importance[,])
+t <- order(imp.temp,decreasing=TRUE)
+plot(c(1:nrow(small.eset)),imp.temp[t],log='x',cex.main=1.5, xlab='gene rank',ylab='variable importance',cex.lab=1.5, pch=16,main='ALL subset results')
+# Get subset of expression values for 25 most 'important' genes
+gn.imp <- names(imp.temp)[t]
+gn.25 <- gn.imp[1:25] # vector of top 25 genes, in order
+t <- is.element(rownames(small.eset),gn.25)
+sig.eset <- small.eset[t,] # matrix of expression values, not necessarily in order
+
+
+## Make a heatmap, with group differences obvious on plot
+library(RColorBrewer)
+hmcol <- colorRampPalette(brewer.pal(11,"PuOr"))(256)
+colnames(sig.eset) <- group # This will label the heatmap columns
+csc <- rep(hmcol[50],42)
+csc[group=='Tumors'] <- hmcol[200]
+# column side color will be purple for T and orange for B
+heatmap(sig.eset, scale="row", col=hmcol, ColSideColors=csc)
+```
+
+I WILL USE IN THE REPORT THE FIGURE OF THE DECREASING ERROR (OOB) AS THE NUMBER OF TREES GETS BIGGER
+
+NOW we use caret, and it is the most important part for the machine learning packages/results to report.
+Here under is the code to understand how the package works
+```{r}
+library(caret)
+controllo <- trainControl(method = "cv", number=3, classProbs= T)
+tuneGrid <- expand.grid(mtry=20:50) # We also can define a grid of algorithm to tunning model. Each axis of grid is an algorithm parameter and point in grid are specific combinations of parameter.
+train_model<-train(x=t(small.eset), y=as.factor(group), num.trees=500, method="rf", trControl = controllo,
+                   tuneGrid = tuneGrid) ## BEST MTRY=32! look at the model to see the best mtry
+train_model$results
+plot(train_model) #We can see the highest accuracy when mtry diverso da 38 e 46
+# guarda confusion matrix di cart
+pippo <- varImp(train_model) # extract the most important variables for the Random Forest
+
+impsor <- sort(pippo$importance$Overall, decreasing=TRUE)
+hist(impsor, breaks=c(0,5,10,15,20,25,30,35,40,45,50,60,70,100), freq=TRUE, xlab="Variable Importance", main="RF VarImp distribution")
+hist(impsor, breaks=5)
+hist(impsor)
+plot(pippo, main="Var per RF", top= 20)
+
+```
+
+
+Here i apply Random forest on the limma selected genes just for fun
+```{r}
+library(caret)
+library("genefilter")
+library(randomForest)
+e.mat <- 2^(selected) # we need a large expressionSet
+# Genefilter package is very useful to preprocess data
+# here we remove genes whose value is not > 0 in at least 20% of the samples
+# filter genes on raw scale, then return to log scale;
+#BiocManager::install("genefilter");
+library("genefilter")
+ffun <- filterfun(pOverA(0.20,0.0))
+t.fil <- genefilter(e.mat,ffun)
+small.eset <- log2(e.mat[t.fil,])
+# Alternative simpler method if you don’t need the complexity of genefilter
+small.eset <- log2(na.omit(e.mat))
+dim(small.eset) # 265 genes, 42 arrays (21 Normal and 21 Controls)
+group <- c(rep("Controls", 21), rep("Tumors",21)) # classification, in order
+
+set.seed(3456) # data partition is random
+
+trainIndex <- createDataPartition(group, p = .75, 
+                                  list = FALSE, 
+                                  times = 1)
+#head(trainIndex)
+small.eset.new<-t(small.eset)
+small.eset.new<-cbind(small.eset.new,group)
+small_eset_Train <- small.eset.new[trainIndex,]
+small_eset_Test  <- small.eset.new[-trainIndex,]
+dim(small_eset_Train) # 32 samples to train, 266 genes
+dim(small_eset_Test) # 10 samples to predict, 266 genes
+controllo <- trainControl(method = "cv", number=3, classProbs= T)
+tuneRF(x=small_eset_Train[1:32, 1:265], y=as.factor(small_eset_Train[1:32, 266])) # small_eset_Train[1:32, 1:265] -> the data, as.factor(small_eset_Train[1:32, 266] -> the groups Controls and Tumor as factors (0's and 1's)
+tuneGrid <- expand.grid(mtry=5:20) # We also can define a grid of algorithm to tunning model. Each axis of grid is an algorithm parameter and point in grid are specific combinations of parameter.
+train_model<-train(x=small_eset_Train[1:32, 1:265], y=as.factor(small_eset_Train[1:32, 266]), num.trees=100, method="rf", trControl = controllo, tuneGrid = tuneGrid)
+train_model$results
+plot(train_model) #We can see the highest accuracy when mtry diverso da 38 e 46
+# guarda confusion matrix di cart
+
+# extract the most important genes for the RF model
+pippo <- varImp(train_model)
+plot(pippo, main="Var per RF", top= 20)
+
+# NB.... TO CREATE THE randomForest model look at the pippo train_model plot and chose as mtry the one for which you have higher accuracy!! You can also change ntree, here i set it at 500 but if youhave very good data you can use 10. It is just a bootstrapping and refinement procedure
+rf_model <- randomForest(x=small_eset_Train[1:32, 1:265],y=as.factor(small_eset_Train[1:32, 266]), ntree=500, mtry =8 ) # fa bootstrapping
+
+
+# predict data using the trained model
+predicted <- predict(rf_model, small_eset_Test[1:10, 1:265]) # predict the test data, without the last column of the groups
+
+predicted
+
+```
+
+To understand the name of the gene use this tool: https://david.ncifcrf.gov/list.jsp
+
+ID: A_24_P187948         Gene Symbol: BID
+ID: A_23_P130194	        pyrroline-5-carboxylate reductase 1(PYCR1)    Homo sapiens
+ID: A_23_P254512	        ephrin A1(EFNA1)	                      	    Homo sapiens
+ID: A_23_P34788	          kinesin family member 2C(KIF2C)	        	    Homo sapiens
+ID: A_23_P9574	          epithelial cell transforming 2(ECT2)	  	    Homo sapiens
+ID: A_24_P187948	        BH3 interacting domain death agonist(BID)	    Homo sapien
+
+
+### Measuring performance ###
+Not explained by professor, ghere for fun.
+
+We can compute the confusion matrix, which shows a cross-tabulation of the observed and predicted classes. The confusionMatrix function can be used to generate these results:
+
+Possiamo vedere dalla confuzion matrix qui sotto che ho un mislabaling -> sbaglio una predizione, in patrticolare un controllo viene catalogato come tumore. Ho un accuratezza dello 1 e un Kappa di 1. 
+
+McNemar’s Test captures the errors made by both models. Specifically, the No/Yes and Yes/No (A/B and B/A in your case) cells in the confusion matrix. The test checks if there is a significant difference between the counts in these two cells. That is all.
+
+First of all, it is important to know that there are two different scenarios in the context of machine learning. The first one is that you are evaluating the quality of your model vs. the reference data (test data or possibly training data). The second scenario is when you are comparing two classification models (algorithms).
+
+In the first scenario you would normally look for the p-value of the test to be greater than 0.05. That is, do not reject the null hypothesis that assumes homogeneity of the proportion of misclassified cases for the two class labels. In your confusion matrix above, these proportions are calculated from cells AB and BA. A significant value here would indicate that your algorithm misclassifies one label more than another.
+
+In summary: what McNemar's theoretically calls marginal homogeneity is, in the first scenario, the homogeneity of the rate of misclassifying the two class labels.
+
+No Information Rate (NIR): the accuracy that could be obtained by always predicting the majority class (class Controls in this case).
+
+P-Value [Acc > NIR]: the p-value for a statistical test comparing the accuracy of the model to the NIR. A small p-value (typically less than 0.05) indicates that the model’s accuracy is significantly better than the NIR.
+
+Balanced Accuracy: the average of sensitivity and specificity, providing a balanced assessment of the model’s performance across both classes.
+
+```{r}
+confusionMatrix(data = predicted, reference = factor(small_eset_Test[1:10, 266]))
+```
+
+
+### Creating the ROC curve ###
+Also this is here for fun. Not asked at the exam.
+
+```{r}
+# Install the pROC package if you haven't already
+if (!requireNamespace("pROC", quietly = TRUE)) {
+   install.packages("pROC")
+ }
+
+# Load the pROC package
+library(pROC)
+
+# Now, let’s create the ROC curve using the predicted probabilities from our logistic regression model:
+# Create the ROC curve
+roc_obj <- roc(factor(small_eset_Test[1:10, 266]), as.numeric(predicted))
+# Plot the ROC curve
+plot(roc_obj, main = "ROC Curve for the Logistic Regression Model")
+abline(0, 1, lty = 2, col = "gray")  # Add a reference line for a random classifier
+```
+
+### Interpreting the ROC Curve ###
+The ROC curve helps us visualize the trade-off between sensitivity (True Positive Rate) and specificity (1 - False Positive Rate) for various threshold values. A perfect classifier would have an ROC curve that passes through the top-left corner of the plot (100% sensitivity and 100% specificity). In contrast, a random classifier would have an ROC curve that follows the diagonal reference line (gray dashed line in our plot).
+
+The area under the ROC curve (AUC) is a scalar value that summarizes the performance of the classifier. An AUC of 1.0 indicates a perfect classifier, while an AUC of 0.5 suggests that the classifier is no better than random chance. We can calculate the AUC using the auc function from the pROC package:
+
+```{r}
+# Calculate the AUC
+auc_value <- auc(roc_obj)
+cat("AUC:", auc_value, "\n")
+```
+
+### SECOND MACHINE LEARNING METHOD: LDA AND ROC CURVE ###
+
+Linear discriminant analysis is a method you can use when you have a set of predictor variables and you’d like to classify a response variable into two or more classes.
+
+NB. I apply LDA on selected genes. I will do the same for RF going further in the analysis as suggested by Professor Lauria
+
+```{r}
+# the lines under perform a fature selection
+tt40 <- rowttests(ex,factor(group)) # perform a rowvise T test, we define the two groups of the T test using the factor(group) -> to understand which columns of the dataframe belongs to group 0 or 1
+# tt40 contains the info on the statistic , we also have teh p.value and we can use a treshold of 0.1 to select only the most significant rows.
+keepers <- which(p.adjust(tt40$p.value)<0.1) # mantengo only 1987 genes
+# keepers <- which(tt40$p.value<0.1)
+selected2 <- ex[keepers,]
+tselected3 <- t(selected2)
+dat <- cbind(as.data.frame(tselected3),factor(group))
+colnames(dat)[ncol(dat)] <- "Type"
+n.controls <- 21
+n.tumors <- 21
+
+# extract train and test samples, we can also use another method explained under
+#train <- sample(1:(n.controls), (n.controls-5))
+#test <- setdiff(1:(n.controls),train)
+#test<- c(test, test+21)
+#train <- c(train, train+21)
+
+# Next, we’ll use the lda() function from the MASS package to fit the LDA model to our data:
+library("MASS")
+# discriminant analysis
+mod <- lda(Type ~ ., data=dat, prior = c(0.5,0.5), subset = trainIndex)
+
+# Stacked histogram for discriminant function values.
+plot(mod) #  We can see that there are some minor overlap between the first and second species (Tumor and Controls).
+
+# Once we’ve fit the model using our training data, we can use it to make predictions on our test data:
+mod.values <- predict(mod, dat[-trainIndex,])
+mod.values$class # #view predicted class -> we have one missclassification
+
+# plot the predicted samples using the lda model, dividing in tumor and controls. We should be able to see the two classes separated over the y axis but here we can see that the last tumoral sample is in the y region of the controls
+plot(mod.values$x[,1], ylab=c("LDA Axis"), col=c(rep("cadetblue1",5), rep("red",5)), pch = 19)
+legend(2, 4, legend=c("Controls", "Tumors"), fill = c("cadetblue1","red") )
+
+
+
+
+# Create the confusion matrix
+table(as.numeric(mod.values$class), as.numeric(dat[-trainIndex, "Type"]) )  # made by hand
+confusionMatrix(data = mod.values$class, reference = dat[-trainIndex, "Type"]) # with confusionMatrix
+# We have an accuracy of 0.9 and a Kappa of 0.8
+
+library("pROC")
+roc_lda <- plot.roc(as.numeric(mod.values$class), as.numeric(dat[-trainIndex, "Type"]) )
+
+#We can use the following code to see what percentage of observations the LDA model correctly predicted
+mean(mod.values$class==dat[-trainIndex,]$Type) # predicted accurately the 90% of the samples
+
+# Lastly, we can create an LDA plot to view the linear discriminants of the model and visualize how well it separated the three different species in our dataset
+
+#define data to plot
+lda_plot <- cbind(dat[-trainIndex,], mod.values$x)
+
+library("caret")
+library("e1071")
+#
+
+## TUNE RF on dat
+
+tuneRF(x=dat, y=as.factor(group)) ####### SUPER IMPORTANT TO EXTRACT THE VALUE OF MTRY BASED ON BEST MTRY=11
+
+
+# Run algorithms using 10-fold cross validation
+#
+control <- trainControl(method="cv")
+metric <- "Accuracy"
+fit.lda <- train(Type~., data=dat, method="lda",metric=metric, trControl=control, subset = trainIndex)
+
+fit.rf <- train(Type~., data=dat, method="rf", metric=metric, trControl=control, subset = trainIndex, tuneGrid=expand.grid(mtry=11))
+results <- resamples(list(LDA=fit.lda, RF=fit.rf))
+summary(results)
+ggplot(results) + labs(y = "Accuracy")
+
+#
+# Run algorithms using 10-fold cross validation, 10 times
+#
+control <- trainControl(method = "repeatedcv", repeats = 10)
+fit.lda.2 <- train(Type~., data=dat, method="lda", metric=metric, trControl=control, subset = trainIndex)
+fit.rf.2 <- train(Type~., data=dat, method="rf", metric=metric, trControl=control, subset = trainIndex,tuneGrid=expand.grid(mtry=11))
+
+results <- resamples(list(LDA=fit.lda.2, RF=fit.rf.2))
+ggplot(results) + labs(y = "Accuracy")
+
+# extract the most important variables for the models
+pippo <- varImp(fit.lda.2)
+pippo2 <- varImp(train_model)
+pippo
+pippo2
+
+# NB.... TO CREATE THE randomForest model look at the pippo train_model plot and chose as mtry the one for which you have higher accuracy!! You can also change ntree, here i set it at 500 but if youhave very good data you can use 10. It is just a bootstrapping and refinement procedure
+rf_model_cv <- randomForest(x=dat[trainIndex,],y=as.factor(group)[trainIndex], ntree=500, mtry =11 ) # fa bootstrapping
+
+# predict data using the trained model
+predicted <- predict(rf_model_cv, dat[-trainIndex,]) # predict the test data, without the last column of the groups
+
+predicted
+confusionMatrix(data = predicted, reference = factor(group)[-trainIndex])
+
+
+```
+
+We can clearly see that the accuracy in the LDA is overall higher respect to the Random Forest.
+
+
+Let's compare the most important variables for RF and LDA
+
+```{r, figures-side, fig.show="hold", out.width="50%"}
+# Compare the most important features for RF and LDA
+
+
+# extract the most important genes for the LDA model
+
+plot(pippo, main="Var for LDA", top= 20)
+
+
+# extract the most important genes for the RF model done above
+
+plot(pippo2, main="Var for RF", top= 20)
+
+```
+
+
+NB. I apply LDA on the selected gene set obtained from LIMMA - again, just for fun
+
+```{r}
+n.controls <- 21
+n.tumors <- 21
+new<-as.data.frame(t(selected))
+dat2<-cbind(new, group)
+colnames(dat2)[ncol(dat2)] <- "Type"
+
+
+# extract train and test samples, we can also use another method explained under
+#train <- sample(1:(n.controls), (n.controls-5))
+#test <- setdiff(1:(n.controls),train)
+#test<- c(test, test+21)
+#train <- c(train, train+21)
+
+# Next, we’ll use the lda() function from the MASS package to fit the LDA model to our data:
+library("MASS")
+# discriminant analysis
+mod2 <- lda(Type ~ ., data=dat2, prior = c(0.5,0.5), subset = trainIndex)
+
+# Stacked histogram for discriminant function values.
+plot(mod2) #  We can see that there are some minor overlap between the first and second species (Tumor and Controls).
+
+# Once we’ve fit the model using our training data, we can use it to make predictions on our test data:
+mod.values2 <- predict(mod2, dat2[-trainIndex,])
+mod.values2$class # #view predicted class -> we have one missclassification
+
+# plot the predicted samples using the lda model, dividing in tumor and controls. We should be able to see the two classes separated over the y axis but here we can see that the last tumoral sample is in the y region of the controls
+plot(mod.values2$x[,1], ylab=c("LDA Axis"), col=c(rep("cadetblue1",5), rep("red",5)), pch = 19)
+legend(2, 4, legend=c("Controls", "Tumors"), fill = c("cadetblue1","red") )
+
+
+
+
+# Create the confusion matrix
+table(mod.values2$class, dat2[-trainIndex, "Type"])  # made by hand
+confusionMatrix(data = mod.values2$class, reference = factor(dat2[-trainIndex, "Type"])) # with confusionMatrix
+# We have an accuracy of 0.9 and a Kappa of 0.8
+
+library("pROC")
+
+#We can use the following code to see what percentage of observations the LDA model correctly predicted
+mean(mod.values2$class==dat2[-trainIndex,]$Type) # predicted accurately the 90% of the samples
+
+# Lastly, we can create an LDA plot to view the linear discriminants of the model and visualize how well it separated the three different species in our dataset
+
+#define data to plot
+lda_plot <- cbind(dat2[-trainIndex,], mod.values2$x)
+
+library("caret")
+library("e1071")
+#
+# Run algorithms using 10-fold cross validation
+#
+control <- trainControl(method="cv", number=3)
+metric <- "Accuracy"
+fit.lda3 <- train(Type ~ ., data=dat2, method="lda",metric=metric, trControl=control, subset = trainIndex)
+fit.rf3 <- train(Type ~ ., data=dat2, method="rf", metric=metric, trControl=control, subset = trainIndex)
+results3 <- resamples(list(LDA=fit.lda3, RF=fit.rf3))
+summary(results3)
+ggplot(results3) + labs(y = "Accuracy")
+
+#
+# Run algorithms using 10-fold cross validation, 10 times
+#
+control <- trainControl(method = "repeatedcv", repeats = 10)
+fit.lda4 <- train(Type ~ ., data=dat2, method="lda", metric=metric, trControl=control, subset = trainIndex)
+fit.rf4 <- train(Type ~ ., data=dat2, method="rf", metric=metric, trControl=control, subset = trainIndex)
+results <- resamples(list(LDA=fit.lda4, RF=fit.rf4))
+ggplot(results) + labs(y = "Accuracy")
+
+
+
+```
+
+SUL subset mi lavora meglio RF!
+
+
+### THIRD/FOURTH MACHINE-LEARNING METHOD: LASSO AND RIDGE ###
+
+# First try with tselected3 -> obtained from rowttest
+# Second try using the selected obtained from LIMMA
+
+Un altro pacchetto, più recente, è glmnet che consente di stimare un modello con regolarizzazione tramite la
+funzione glmnet. Il default è α = 1 che significa LASSO, con α = 0 si ha regressione Ridge. alpha is for the elastic net mixing parameter α, with range α∈[0,1]
+. α=1 is lasso regression (default) and α=0 is ridge regression.
+
+The command loads an input matrix x and a response vector y from this saved R data archive.
+
+We fit the model using the most basic call to glmnet
+
+fit is an object of class glmnet that contains all the relevant information of the fitted model for further use. We do not encourage users to extract the components directly. Instead, various methods are provided for the object such as plot, print, coef and predict that enable us to execute those tasks more elegantly.
+
+```{r}
+#install.packages("glmnet")
+library("glmnet")
+
+# USING LASSO
+
+group_lasso<-c(rep(0, 21),rep(1,21)) # our vector y
+fit=glmnet(tselected3,group_lasso,standardize=FALSE,family="binomial", alpha = 1)
+
+
+plot(fit, xvar = 'lambda', label=TRUE)
+
+
+cfit=cv.glmnet(tselected3,group_lasso,standardize=FALSE,family="binomial",alpha=1)
+
+plot(cfit)
+
+coef(cfit, s=cfit$lambda.min)
+
+
+# USING RIDGE
+
+fit2=glmnet(tselected3,group_lasso,standardize=FALSE,family="binomial", alpha = 0)
+
+
+plot(fit2, xvar = 'lambda', label=TRUE)
+
+
+cfit_2=cv.glmnet(tselected3,group_lasso,standardize=FALSE,family="binomial", alpha=0)
+
+plot(cfit_2)
+
+coef(cfit_2, s=cfit_2$lambda.min)
+
+# repeat analysis but by using train + test sample subsets
+# FOR LASSO
+n.controls<-21
+n.affected<-21
+
+# The code under is non deterministic -> we need to repeat a certain number of time and see what happens
+#train <- sample(1:(n.controls), (n.controls-5))
+#test <- setdiff(1:(n.controls),train)
+#test<- c(test, test+20)
+#train <- c(train, train+20)
+
+fit=glmnet(tselected3[trainIndex,],group[trainIndex],standardize=FALSE,family="binomial", alpha=1)
+plot(fit)
+cfit=cv.glmnet(tselected3[trainIndex,],group[trainIndex],standardize=FALSE,family="binomial", alpha=1)
+plot(cfit)
+predict(fit,tselected3[-trainIndex,], type="class", s= cfit$lambda.min)
+
+# plot ROCR curve
+#install.packages("ROCR")
+library("ROCR")
+pred2 <- predict(fit,tselected3[-trainIndex,], type="response", s=cfit$lambda.min)
+plot(performance(prediction(pred2, group[-trainIndex]), 'tpr', 'fpr'))
+# compute Area Under the Curve (AUC)
+auc.tmp <- performance(prediction(pred2, group[-trainIndex]),"auc")
+auc <- as.numeric(auc.tmp@y.values)
+auc
+
+# THE SAME AS ABOVE BUT FOR RIDGE
+fit_2=glmnet(tselected3[trainIndex,],group[trainIndex],standardize=FALSE,family="binomial", alpha=0)
+plot(fit_2)
+cfit_2=cv.glmnet(tselected3[trainIndex,],group[trainIndex],standardize=FALSE,family="binomial", alpha=0)
+plot(cfit_2)
+predict(fit_2,tselected3[-trainIndex,], type="class", s= cfit_2$lambda.min)
+
+# plot ROCR curve
+#install.packages("ROCR")
+library("ROCR")
+pred3 <- predict(fit_2,tselected3[-trainIndex,], type="response", s=cfit_2$lambda.min)
+plot(performance(prediction(pred3, group[-trainIndex]), 'tpr', 'fpr'))
+# compute Area Under the Curve (AUC)
+auc.tmp_2 <- performance(prediction(pred3, group[-trainIndex]),"auc")
+auc_2 <- as.numeric(auc.tmp_2@y.values)
+auc_2
+```
+
+### With Caret to get accuracy results ###
+
+```{r}
+# Run algorithms using 10-fold cross validation
+# method cv is for cross-validation and we repeat 10 times
+control <- trainControl(method = "repeatedcv", repeats = 10)
+metric <- "Accuracy"
+fit.lasso <- train(Type~., data=dat[trainIndex,], method="glmnet", family = "binomial", TuneGrid = expand.grid(alpha = 1,lambda = seq(0,1,by=0.05)), trControl = control, metric = metric)
+fit.lasso
+# look at the best accuracy and kappa
+
+fit.ridge <- train(Type~., data=dat[trainIndex,], method="glmnet", family = "binomial", TuneGrid = expand.grid(alpha = 0,lambda = seq(0,1,by=0.05)), trControl = control, metric = metric)
+fit.ridge 
+# look at the best accuracy and kappa
+
+# selected alpha, lambda by above
+fit.lasso.final<-train(Type~., data=dat[trainIndex,], method="glmnet", family = "binomial", TuneGrid = expand.grid(alpha = 1,lambda = 0.27789403), trControl = control, metric = metric)
+
+# selected alpha, lambda by above
+fit.ridge.final<-train(Type~., data=dat[trainIndex,], method="glmnet", family = "binomial", TuneGrid = expand.grid(alpha = 0,lambda = 0.02778940), trControl = control, metric = metric)
+
+results <- resamples(list(LDA=fit.lda4, RF=fit.rf4, LASSO=fit.lasso, RIDGE=fit.ridge))
+ggplot(results) + labs(y = "Accuracy")
+
+
+plot(varImp(fit.lasso), main="Var for LASSO", top= 20)
+plot(varImp(fit.ridge), main="Var for RIDGE", top= 20)
+```
+
+### LAST MACHINE-LEARNING METHOD: With SCUDO ###
+
+scudoTrain: Given a set of expression profiles with known classification, scudoTrain computes a list of signatures composed of genes over- and under-expressed in each sample. It also compute consensus
+signatures for each group and uses the signatures to compute a distance matrix that quantifies the
+similarity between the signatures of pairs of samples.
+
+
+```{r}
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+
+#BiocManager::install("rScudo")
+
+library(rScudo)
+
+#install.packages("igraph")
+
+library(igraph)
+
+library("caret")
+set.seed(123)
+#inTrain <- createDataPartition(group, list = FALSE)
+#trainData <- as.data.frame(t(dat[inTrain,1:1987])) # i need to remove the last row cause it is the groups!
+#testData <- as.data.frame(t(dat[-inTrain,1:1987]))
+trainData<-as.data.frame(t(dat[trainIndex, 1:1987])) # i need to remove the last row cause it is the groups!
+testData<-as.data.frame(t(dat[-trainIndex, 1:1987]))
+
+# analyze training set
+trainRes <- scudoTrain(trainData, groups = factor(group[trainIndex]),nTop = 100, nBottom = 100, alpha = 0.05)
+
+trainRes
+# inspect signatures
+UP_scudo<-upSignatures(trainRes)[1:5,1:5]
+UP_scudo
+Consensu_scudo<-consensusUpSignatures(trainRes)[1:5, ]
+Consensu_scudo
+# generate and plot map of training samples
+trainNet <- scudoNetwork(trainRes, N = 0.25)
+scudoPlot(trainNet, vertex.label = NA, col=factor(type[trainIndex]))
+# perform validation using testing samples
+testRes <- scudoTest(trainRes, testData, factor(group[-trainIndex]), nTop = 100, nBottom = 100)
+testNet <- scudoNetwork(testRes, N = 0.25)
+scudoPlot(testNet, vertex.label = NA, col=factor(type[-trainIndex]))
+
+# identify clusters on map
+library("igraph")
+# The implementation of the spinglass clustering algorithm that is included in igraph works on connected graphs only. You have to decompose your graph to its connected components, run the clustering on each of the connected components, and then merge the membership vectors of the clusterings manually.
+# you can decompose your main graph using the clusters method of iGraph like in the example bellow:
+dg <- decompose(testNet)
+subgraphs<-t(sapply(seq_along(dg), function(x) c(Subgraph = x, NodeCount = vcount(dg[[x]]), EdgeCount = ecount(dg[[x]]))))
+subgraphs # we can see that the connsected graphs are subgraphs 2 and  5
+graph_1<-dg[[1]]
+graph_2<-dg[[3]]
+
+
+
+testClust <- igraph::cluster_spinglass(graph_1, spins = 2)
+testClust2 <- igraph::cluster_spinglass(graph_2, spins = 2)
+plot(testClust, testNet, vertex.label = NA)
+plot(testClust2, testNet, vertex.label = NA)
+# perform classification
+classRes <- scudoClassify(trainData, testData, N = 0.25, nTop = 100, nBottom = 100, trainGroups = factor(group[trainIndex]), alpha = 0.5)
+caret::confusionMatrix(classRes$predicted, factor(group[-trainIndex]))
+
+```
+
+if you want you can insert the image of the cluster at the end in the supplementary cause Laria likes it
+
+### SCUDO + CARET on all the machine learning methods ###
+
+```{r}
+# use caret to test a grid a values for nTop & nBottom
+# using cross validation
+
+# TO DOOOO:
+model <- scudoModel(nTop = (2:50)*50, nBottom = (2:50)*50, N = 0.25)
+# from model we can see a table of teh accuracies and Kappa based on the number of Ntop, nBot. We want the highest accuracy and Kappa possible, we select therefore nTop=100 and nBottom=100
+# Tuning parameter 'N' was held constant at a value of 0.25
+# Tuning parameter 'maxDist' was held constant at a value of 1
+# Tuning parameter 'weighted' was held constant at a value of TRUE
+# Tuning parameter 'complete' was held constant at a value of FALSE
+# Tuning parameter 'beta' was held constant at a value of 1
+# Accuracy was used to select the optimal model using the largest value.
+# The final values used for the model were nTop = 100, nBottom = 100, N = 0.25, maxDist = 1, weighted = TRUE, complete = FALSE and beta = 1
+
+control <- caret::trainControl(method = "cv")
+
+# method cv is for cross-validation and we repeat 10 times
+control2 <- trainControl(method = "repeatedcv", repeats = 10)
+#cvRes <- caret::train(x = t(trainData), y = group[trainIndex], method = model, trControl = control)
+
+
+model_final <- scudoModel(nTop = 100, nBottom = 100, N = 0.25,maxDist = 1, weighted = TRUE, complete = FALSE, beta = 1)
+
+scudo_train <- train(Type~., data=dat[trainIndex,], method=model_final, trControl = control, metric = metric)
+scudo_train
+
+scudo_train2 <- train(Type ~ ., data=dat[trainIndex,], method=model_final, trControl = control2, metric = metric)
+scudo_train2
+
+
+
+# plot map of testing samples using best nTop & nBottom
+# values
+#testRes <- scudoTest(trainRes, testData, factor(group[-trainIndex]), cvRes$bestTune$nTop, cvRes$bestTune$nBottom5)
+#testNet <- scudoNetwork(testRes, N = 0.2)
+#scudoPlot(testNet, vertex.label = NA)
+# perform classification of testing samples using best
+# nTop & nBottom values
+#classRes <- scudoClassify(trainData, testData,0.25,cvRes$bestTune$nTop, cvRes$bestTune$nBottom, factor(group[trainIndex]), alpha = 0.05)
+#caret::confusionMatrix(classRes$predicted, factor(group[-trainIndex]))
+
+
+
+
+results <- resamples(list(LDA=fit.lda4, RF=fit.rf4, LASSO=fit.lasso, RIDGE=fit.ridge, SCUDO=scudo_train2))
+ggplot(results) + labs(y = "Accuracy")
+
+
+
+
+
+# try again with more genes, so using ex
+
+# the lines under perform a fature selection NON RIGID ONE
+tt <- rowttests(ex,factor(group)) # perform a rowvise T test, we define the two groups of the T test using the factor(group) -> to understand which columns of the dataframe belongs to group 0 or 1
+# tt40 contains the info on the statistic , we also have teh p.value and we can use a treshold of 0.1 to select only the most significant rows.
+keepers_non_rigid <- which(p.adjust(tt$p.value)<1) # mantengo only 1987 genes
+# keepers <- which(tt40$p.value<0.1)
+selected4 <- ex[keepers_non_rigid,]
+tselected5 <- t(selected4)
+data_complete <- cbind(as.data.frame(tselected5),factor(group))
+colnames(data_complete)[ncol(data_complete)] <- "Type"
+
+
+scudo_train3 <- train(Type~., data=data_complete[trainIndex,], method=model_final, trControl = control2, metric = metric)
+scudo_train3
+# non cambia nulllaaa, scudo fa sempre schifooo
+
+# this should be the best but i don't have the ram for it
+
+#model_final2 <- scudoModel(nTop = 100, nBottom = 100, N = 0.25,maxDist = 1, weighted = TRUE, complete = FALSE, beta = 0.001)
+#scudo_train4 <- train(Type~., data=t(ex)[trainIndex,], method=model_final2, trControl = control2, metric = metric)
+#scudo_train4
+
+scudo_train5<-train(Type ~ ., data=dat2[trainIndex,], method=model_final, trControl = control2, metric = metric)
+scudo_train5
+# nothing changesss, still really bad results
+
+```
+
+
+TO PUT IN THE REPORT THE GRAPH WITH THE PERFORMANCE OF ALL THE MACHINE LEARNING METHODS
+
+
+### Extracting all the top20 most important variables for each model ###
+
+I USED THE GRAPHS IN THE SUPPLEMENATRY OF THE PAPER JUST FOR FUN. INITIALLY I WANTED TO SEE IF THE TOP 20 WERE SHARED AMONG THE MACHINE LEARNING METHODS BUT I HADN'T ENOUGH TIME.
+
+```{r}
+results <- resamples(list(LDA=fit.lda4, RF=fit.rf4, LASSO=fit.lasso, RIDGE=fit.ridge, SCUDO=scudo_train2))
+pippo_RF<-varImp(fit.rf4)
+pippo_LDA<-varImp(fit.lda.2)
+pippo_R<-varImp(fit.ridge)
+pippo_Lasso<-varImp(fit.lasso)
+pippo_SCUDO<-varImp(scudo_train2)
+plot(pippo_RF, main="Random Forest", top= 20 )
+plot(pippo_LDA, main="LDA", top= 20 )
+plot(pippo_R, main="Ridge", top= 20 )
+plot(pippo_Lasso, main="Lasso", top= 20 )
+plot(pippo_SCUDO, main="SCUDO", top= 20 )
+
+p_r<-head(pippo_RF$importance, 20)
+p_ri<-head(pippo_R$importance, 20)
+p_l<-head(pippo_Lasso$importance, 20)
+p_lda<-head(pippo_LDA$importance, 20)
+p_s<-head(pippo_SCUDO$importance, 20)
+rownames(pippo_RF$importance)[rownames(pippo_RF$importance) %in% rownames(pippo_LDA$importance)]
+
+```
+
+
+
+
+
+### Enrichment analysis ###
+
+Let's run this analysis on the selected gene obtained from LIMMA, so on the object stats.
+
+g:GOSt performs functional profiling of gene lists using various kinds of biological evidence. The tool performs statistical enrichment analysis to find over-representation of information from Gene Ontology terms, biological pathways, regulatory DNA elements, human disease gene annotations, and protein-protein interaction networks.
+
+g:GOSt uses Fisher's one-tailed test, also known as cumulative hypergeometric probability, as the p-value measuring the randomness of the intersection between the query and the ontology term. The p-value represents the probability of the observed intersection plus probabilities of all larger, more extreme intersections.
+
+LOOK AT PAGE: https://biit.cs.ut.ee/gprofiler/page/docs
+
+
+```{r}
+# install.packages("gprofiler2")
+library(gprofiler2)
+
+# stats contains a total of 265 genes
+
+# see vignette at https://cran.r-project.org/web/packages/gprofiler2/vignettes/gprofiler2.html
+gostres2 <- gost(query = c(rownames(stats)), organism = "hsapiens", ordered_query = TRUE, multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, measure_underrepresentation = FALSE, evcodes = FALSE, user_threshold = 0.05, correction_method = "g_SCS", domain_scope = "annotated", custom_bg = NULL, numeric_ns = "", sources = NULL, as_short_link = FALSE)
+
+
+
+# CHE SCHIFO R
+names(gostres2)
+head(gostres2$result)
+
+table(gostres2$result$source)
+# GO:BP GO:CC GO:MF   HPA  REAC    TF    WP 
+#   56    31    15     7     3     4     3
+
+
+
+sorted<-sort(gostres2$result$p_value)
+
+# extract the first top 5 terms for teh p-value and use them in the gostplot to highligt them
+to_highlight<-head(sorted,10)
+highligted<-gostres2$result[gostres2$result$p_value %in% to_highlight,]
+
+
+
+# visualize results using a Manhattan plot
+gostplot(gostres2, capped = TRUE, interactive = TRUE)
+
+# when ready, create publication quality (static) plot + table of interesting terms/pathways
+# under save thegostplot in p
+p <- gostplot(gostres2, capped = TRUE, interactive = FALSE)
+# selected the first two terms (taken from the head(gostres2$result)) that have the highest pval and good pvalue (under 0.05). 
+# The proportion of genes in the input list that are annotated to the function. Defined as intersection_size/query_size.
+# FOR MORE INFO ON TEH OUTPUT LOOK AT: https://biit.cs.ut.ee/gprofiler/page/apis
+publish_gostplot(p, highlight_terms = c(highligted$term_id),width = 100  , height = NA, filename = NULL)
+```
+
+```{r}
+# visualize results using a Manhattan plot
+gostplot(gostres2, capped = TRUE, interactive = TRUE)
+```
+
+
+
+
+## We can try to do the same analysis but on the genes important for the several models!
+
+RANDOM FOREST:
+NB, Under you need to check the importance treshold when extracting teh most important genes! I try to keep the same for all the models. I did an histogram and then I choos arbitrariamente dove settare la treshold.
+
+
+```{r}
+impsor <- sort(pippo2$importance$Overall, decreasing=TRUE)
+hist(impsor, breaks=c(0,5,10,15,20,25,30,35,40,45,50,60,70,100), freq=TRUE, xlab="Variable Importance", main="RF VarImp distribution")
+```
+
+
+
+
+```{r}
+# Select the most important genes for the RF model, I decided to select the ones that have overall importance major than 10
+important_RF<-pippo2$importance[pippo2$importance$Overall>10,] # important_RF contains teh importance for teh corrispective gene names that are in names_RF
+# extract the rownames
+names_RF<-rownames(pippo2$importance)[pippo2$importance$Overall>10] # we have 94 genes over 265
+
+# see vignette at https://cran.r-project.org/web/packages/gprofiler2/vignettes/gprofiler2.html
+gostres_RF <- gost(query = c(names_RF), organism = "hsapiens", ordered_query = TRUE, multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, measure_underrepresentation = FALSE, evcodes = FALSE, user_threshold = 0.05, correction_method = "g_SCS", domain_scope = "annotated", custom_bg = NULL, numeric_ns = "", sources = NULL, as_short_link = FALSE)
+
+
+
+# CHE SCHIFO R
+names(gostres_RF)
+head(gostres_RF$result)
+
+
+table(gostres_RF$result$source)
+# GO:BP GO:CC GO:MF   HPA  REAC    TF    WP 
+# 29    13     8     4     1     2     1     4
+
+
+
+sorted_RF<-sort(gostres_RF$result$p_value)
+
+# extract the first top 5 terms for teh p-value and use them in the gostplot to highligt them
+to_highlight_RF<-head(sorted_RF,10)
+highligted_RF<-gostres_RF$result[gostres_RF$result$p_value %in% to_highlight_RF,]
+
+# visualize results using a Manhattan plot
+gostplot(gostres_RF, capped = TRUE, interactive = TRUE)
+
+# when ready, create publication quality (static) plot + table of interesting terms/pathways
+# under save thegostplot in p
+p_RF <- gostplot(gostres_RF, capped = TRUE, interactive = FALSE)
+# selected the first two terms (taken from the head(gostres2$result)) that have the highest pval and good pvalue (under 0.05). 
+# The proportion of genes in the input list that are annotated to the function. Defined as intersection_size/query_size.
+# FOR MORE INFO ON TEH OUTPUT LOOK AT: https://biit.cs.ut.ee/gprofiler/page/apis
+publish_gostplot(p_RF, highlight_terms = c(highligted_RF$term_id),width = NA, height = NA, filename = NULL )
+```
+
+
+Now LDA
+
+
+```{r}
+pippo <- varImp(fit.lda.2)
+impsor <- sort(pippo$importance$Controls, decreasing=TRUE)
+hist(impsor, breaks=c(0,5,10,15,20,25,30,35,40,45,50,60,70,100), freq=TRUE, xlab="Variable Importance", main="LDA VarImp distribution")
+
+```
+
+
+
+```{r}
+# Select the most important genes for the RF model, I decided to select the ones that have overall importance major than 10
+important_LDA<-pippo$importance[pippo$importance$Tumors>70,] # important_RF contains teh importance for teh corrispective gene names that are in names_RF
+# extract the rownames
+names_LDA<-rownames(pippo$importance)[pippo$importance$Tumors>70] # we have 94 genes over 265
+
+# see vignette at https://cran.r-project.org/web/packages/gprofiler2/vignettes/gprofiler2.html
+gostres_LDA <- gost(query = c(names_LDA), organism = "hsapiens", ordered_query = TRUE, multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, measure_underrepresentation = FALSE, evcodes = FALSE, user_threshold = 0.05, correction_method = "g_SCS", domain_scope = "annotated", custom_bg = NULL, numeric_ns = "", sources = NULL, as_short_link = FALSE)
+
+
+
+# CHE SCHIFO R
+names(gostres_LDA)
+head(gostres_LDA$result)
+
+
+table(gostres_LDA$result$source)
+# GO:BP GO:CC GO:MF   HPA  REAC    TF    WP 
+
+sorted_LDA<-sort(gostres_LDA$result$p_value)
+
+# extract the first top 5 terms for teh p-value and use them in the gostplot to highligt them
+to_highlight_LDA<-head(sorted_LDA,10)
+highligted_LDA<-gostres_LDA$result[gostres_LDA$result$p_value %in% to_highlight_LDA,]
+
+# visualize results using a Manhattan plot
+gostplot(gostres_LDA, capped = TRUE, interactive = TRUE)
+
+# when ready, create publication quality (static) plot + table of interesting terms/pathways
+# under save thegostplot in p
+p_LDA <- gostplot(gostres_LDA, capped = TRUE, interactive = FALSE)
+# selected the first two terms (taken from the head(gostres2$result)) that have the highest pval and good pvalue (under 0.05). 
+# The proportion of genes in the input list that are annotated to the function. Defined as intersection_size/query_size.
+# FOR MORE INFO ON TEH OUTPUT LOOK AT: https://biit.cs.ut.ee/gprofiler/page/apis
+publish_gostplot(p_LDA, highlight_terms = c(highligted_LDA$term_id),width = NA, height = NA, filename = NULL )
+```
+
+Now lasso
+
+
+```{r}
+impsor <- sort(pippo_lasso$importance$Overall, decreasing=TRUE)
+hist(impsor, breaks=c(0,5,10,15,20,25,30,35,40,45,50,60,70,100), freq=TRUE, xlab="Variable Importance", main="LASSO VarImp distribution")
+
+impsor <- sort(pippo_ridge$importance$Overall, decreasing=TRUE)
+hist(impsor, breaks=c(0,5,10,15,20,25,30,35,40,45,50,60,70,100), freq=TRUE, xlab="Variable Importance", main="Ridge VarImp distribution")
+
+```
+
+
+```{r}
+pippo_lasso<-varImp(fit.lasso)
+pippo_ridge<-varImp(fit.ridge)
+
+
+# Select the most important genes for the RF model, I decided to select the ones that have overall importance major than 10
+important_LASSO<-pippo_lasso$importance[pippo_lasso$importance$Overall>0,] # important_RF contains teh importance for teh corrispective gene names that are in names_RF
+# extract the rownames
+names_LASSO<-rownames(pippo_lasso$importance)[pippo_lasso$importance$Overall>0] # we have 94 genes over 265
+
+# see vignette at https://cran.r-project.org/web/packages/gprofiler2/vignettes/gprofiler2.html
+gostres_LASSO <- gost(query = c(names_LASSO), organism = "hsapiens", ordered_query = TRUE, multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, measure_underrepresentation = FALSE, evcodes = FALSE, user_threshold = 0.05, correction_method = "g_SCS", domain_scope = "annotated", custom_bg = NULL, numeric_ns = "", sources = NULL, as_short_link = FALSE)
+
+
+
+# CHE SCHIFO R
+names(gostres_LASSO)
+head(gostres_LASSO$result)
+
+
+table(gostres_LASSO$result$source)
+# GO:MF
+# 4
+
+
+sorted_RF<-sort(gostres_LASSO$result$p_value)
+
+# extract the first top 5 terms for teh p-value and use them in the gostplot to highligt them
+to_highlight_LASSO<-head(sorted_RF)
+highligted_LASSO<-gostres_LASSO$result[gostres_LASSO$result$p_value %in% to_highlight_LASSO,]
+
+# visualize results using a Manhattan plot
+gostplot(gostres_LASSO, capped = TRUE, interactive = TRUE)
+
+# when ready, create publication quality (static) plot + table of interesting terms/pathways
+# under save thegostplot in p
+p_LASSO <- gostplot(gostres_LASSO, capped = TRUE, interactive = FALSE)
+# selected the first two terms (taken from the head(gostres2$result)) that have the highest pval and good pvalue (under 0.05). 
+# The proportion of genes in the input list that are annotated to the function. Defined as intersection_size/query_size.
+# FOR MORE INFO ON TEH OUTPUT LOOK AT: https://biit.cs.ut.ee/gprofiler/page/apis
+publish_gostplot(p_LASSO, highlight_terms = c(highligted_LASSO$term_id),width = NA, height = NA, filename = NULL )
+
+
+
+
+```
+
+
+
+Now ridge
+
+
+
+
+```{r}
+pippo_ridge<-varImp(fit.ridge)
+
+
+# Select the most important genes for the RF model, I decided to select the ones that have overall importance major than 10
+important_RIDGE<-pippo_ridge$importance[pippo_ridge$importance$Overall>0,] # important_RF contains teh importance for teh corrispective gene names that are in names_RF
+# extract the rownames
+name_RIDGE<-rownames(pippo_ridge$importance)[pippo_ridge$importance$Overall>0] # we have 94 genes over 265
+
+# see vignette at https://cran.r-project.org/web/packages/gprofiler2/vignettes/gprofiler2.html
+gostres_RIDGE <- gost(query = c(name_RIDGE), organism = "hsapiens", ordered_query = TRUE, multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, measure_underrepresentation = FALSE, evcodes = FALSE, user_threshold = 0.05, correction_method = "g_SCS", domain_scope = "annotated", custom_bg = NULL, numeric_ns = "", sources = NULL, as_short_link = FALSE)
+
+
+
+# CHE SCHIFO R
+names(gostres_RIDGE)
+head(gostres_RIDGE$result)
+
+
+table(gostres_RIDGE$result$source)
+# GO:MF
+# 4
+
+
+sorted_RIDGE<-sort(gostres_RIDGE$result$p_value)
+
+# extract the first top 5 terms for teh p-value and use them in the gostplot to highligt them
+to_highlight_RIDGE<-head(sorted_RIDGE)
+highligted_RIDGE<-gostres_RIDGE$result[gostres_RIDGE$result$p_value %in% to_highlight_RIDGE,]
+
+# visualize results using a Manhattan plot
+gostplot(gostres_RIDGE, capped = TRUE, interactive = TRUE)
+
+# when ready, create publication quality (static) plot + table of interesting terms/pathways
+# under save thegostplot in p
+p_RIDGE <- gostplot(gostres_RIDGE, capped = TRUE, interactive = FALSE)
+# selected the first two terms (taken from the head(gostres2$result)) that have the highest pval and good pvalue (under 0.05). 
+# The proportion of genes in the input list that are annotated to the function. Defined as intersection_size/query_size.
+# FOR MORE INFO ON TEH OUTPUT LOOK AT: https://biit.cs.ut.ee/gprofiler/page/apis
+publish_gostplot(p_RIDGE, highlight_terms = c(highligted_RIDGE$term_id),width = NA, height = NA, filename = NULL )
+
+```
+
+
+SCUDO
+
+I am using a version of the train SCUDO that i snot completely right!
+
+
+
+```{r}
+impsor <- sort(pippo_scudo$importance$Controls, decreasing=TRUE)
+hist(impsor, breaks=c(0,5,10,15,20,25,30,35,40,45,50,60,70,100), freq=TRUE, xlab="Variable Importance", main="SCUDO VarImp distribution")
+```
+
+
+
+```{r}
+pippo_scudo<-varImp(scudo_train2)
+
+
+# Select the most important genes for the RF model, I decided to select the ones that have overall importance major than 10
+important_SCUDO<-pippo_scudo$importance[pippo_scudo$importance$Tumors>70,] # important_RF contains teh importance for teh corrispective gene names that are in names_RF
+# extract the rownames
+names_SCUDO<-rownames(pippo_scudo$importance)[pippo_scudo$importance$Tumors>70]
+
+# see vignette at https://cran.r-project.org/web/packages/gprofiler2/vignettes/gprofiler2.html
+gostres_SCUDO <- gost(query = c(names_SCUDO), organism = "hsapiens", ordered_query = TRUE, multi_query = FALSE, significant = TRUE, exclude_iea = FALSE, measure_underrepresentation = FALSE, evcodes = FALSE, user_threshold = 0.05, correction_method = "g_SCS", domain_scope = "annotated", custom_bg = NULL, numeric_ns = "", sources = NULL, as_short_link = FALSE)
+
+
+
+# CHE SCHIFO R
+names(gostres_SCUDO)
+head(gostres_SCUDO$result)
+
+
+table(gostres_SCUDO$result$source)
+#CORUM GO:BP GO:CC GO:MF   HPA  KEGG MIRNA  REAC    TF    WP 
+#   12   312    85    70     2     3     3    48   405     5
+
+sorted_SCUDO<-sort(gostres_SCUDO$result$p_value)
+
+# extract the first top 5 terms for teh p-value and use them in the gostplot to highligt them
+to_highlight_SCUDO<-head(sorted_SCUDO,10)
+highligted_SCUDO<-gostres_SCUDO$result[gostres_SCUDO$result$p_value %in% to_highlight_SCUDO,]
+
+# visualize results using a Manhattan plot
+gostplot(gostres_SCUDO, capped = TRUE, interactive = TRUE)
+
+# when ready, create publication quality (static) plot + table of interesting terms/pathways
+# under save thegostplot in p
+p_SCUDO <- gostplot(gostres_SCUDO, capped = TRUE, interactive = FALSE)
+# selected the first two terms (taken from the head(gostres2$result)) that have the highest pval and good pvalue (under 0.05). 
+# The proportion of genes in the input list that are annotated to the function. Defined as intersection_size/query_size.
+# FOR MORE INFO ON TEH OUTPUT LOOK AT: https://biit.cs.ut.ee/gprofiler/page/apis
+publish_gostplot(p_SCUDO, highlight_terms = c(highligted_SCUDO$term_id),width = NA, height = NA, filename = NULL )
+
+
+```
+
+TO CHECK IF SAME VARIABLES AS IMPORTANT IN THE SEVERAL METHODS - è inutile 
+
+```{r}
+table(names_RF %in% names_LDA)
+table(names_RF %in% names_LASSO)
+table(names_RF %in% name_RIDGE)
+table(names_RF %in% names_SCUDO)
+
+table(names_LDA %in% names_RF)
+table(names_LDA %in% names_LASSO)
+table(names_LDA %in% name_RIDGE)
+table(names_LDA %in% names_SCUDO)
+
+table(name_RIDGE %in% names_RF)
+table(name_RIDGE %in% names_LASSO)
+table(name_RIDGE %in% names_LDA)
+table(name_RIDGE %in% names_SCUDO)
+
+table(names_LASSO %in% names_RF)
+table(names_LASSO %in% names_LDA)
+table(names_LASSO %in% name_RIDGE)
+table(names_LASSO %in% names_SCUDO)
+
+table(names_SCUDO %in% names_RF)
+table(names_SCUDO %in% names_LDA)
+table(names_SCUDO %in% name_RIDGE)
+table(names_SCUDO %in% names_LASSO)
+
+table(names_SCUDO %in% rownames(stats))
+table(name_RIDGE %in% rownames(stats))
+table(names_RF %in% rownames(stats))
+table(names_LDA %in% rownames(stats))
+table(names_LASSO %in% rownames(stats))
+
+
+
+```
+
+
+
+### Converting the IDs to give them to DAVID ###
+
+IMPORTANT: download annotation for a specific chip – in this example the chip is
+Agilent-014850 Whole Human Genome Microarray 4x44K G4112F (Probe Name version) 
+NB You need to search the correct annotation for based on the methodology used to create your chip!
+
+```{r}
+#install.packages("BiocManager")
+#
+# 
+#
+#BiocManager::install("hgug4112a.db")
+library("hgug4112a.db")
+# extract map of interest (probeID to GENE SYMBOL)
+my.map <- hgug4112aSYMBOL
+# not all probeID have a mapping (ie an annotation)
+mapped.probes <- mappedkeys(my.map)
+# get Entrez ID for the Affy ID of interest (ie. first five)
+my.symbols <- as.data.frame(my.map[mapped.probes])
+# inspect result
+my.symbols[1:10,]
+
+# check what other maps are available
+#ls("package:hgug4112a.db")
+
+# MAP MY STAT IDS INTO GENE SYMBOL
+
+my.names_stats<-as.data.frame(my.symbols$symbol[my.symbols$probe_id %in% rownames(stats)])
+
+my.names_RF<-as.data.frame(my.symbols$symbol[my.symbols$probe_id %in% names_RF])
+
+my.names_LASSO<-as.data.frame(my.symbols$symbol[my.symbols$probe_id %in% names_LASSO])
+
+my.names_LDA<-as.data.frame(my.symbols$symbol[my.symbols$probe_id %in% names_LDA])
+
+my.names_SCUDO<-as.data.frame(my.symbols$symbol[my.symbols$probe_id %in% names_SCUDO])
+
+my.names_RIDGE<-as.data.frame(my.symbols$symbol[my.symbols$probe_id %in% name_RIDGE])
+
+
+
+write.table(my.names_LDA, "nomi_LDA.txt", row.names = FALSE, sep="\n", quote=FALSE)
+write.table(my.names_SCUDO, "nomi_SCUDO.txt", row.names = FALSE, sep="\n", quote=FALSE)
+write.table(my.names_LASSO, "nomi_LASSO.txt", row.names = FALSE, sep="\n", quote=FALSE)
+write.table(my.names_stats, "nomi_stats.txt", row.names = FALSE, sep="\n", quote=FALSE)
+write.table(my.names_RF,  "nomi_RF.txt", row.names = FALSE, sep="\n", quote=FALSE) 
+
+```
+
+BASTA APRIRE I TXT CREATI E DARLI IN PASTO A:
+- DAVID
+- ENRICHNET
+- STRING
+ed è fata, si ottengono i risultati yeee
+NB. IO PER STRING HO FATTO ANCHE UN CLUSTERING GIUSTO PER, SI PUO FARE DIRETTAMENTE DEL TOOL, AL MASSIMO MI SCRIVI E TI FACCIO VEDERE COME SI FA
+
+
+### Pathway enrichment ###
+NON FUNZIONAAA
+
+```{r}
+#BiocManager::install("KEGGREST")
+#BiocManager::install("KEGGgraph")
+#BiocManager::install("AnnotationDbi")
+#BiocManager::install("org.Hs.eg.db")
+library("KEGGREST")
+library("KEGGgraph")
+library("AnnotationDbi")
+library("org.Hs.eg.db")
+#BiocManager::install("ggkegg")
+install.packages('pathfindR')
+# VA AGGIORNATO R ma non mi fido da sola
+BiocManager::install("ggkegg")
+install.packages("magick")
+library("pathfindR")
+
+
+```
+
+
+
+
+```{r}
+# run_pathfindR
+
+data_path<-as.data.frame(my.names_stats)
+data_path<-cbind(data_path,stats$logFC[rownames(stats) %in% my.symbols$probe_id])
+data_path<-cbind(data_path,stats$adj.P.Val[rownames(stats) %in% my.symbols$probe_id])
+dim(data_path)
+colnames(data_path)<-c("GENE", "CHANGE", "P_VALUE")
+head(data_path)
+RA_input<-data_path
+
+pathfindR_results <- run_pathfindR(RA_input, iterations = 1, gene_sets = "KEGG")
+pathfindR_cluster <- cluster_enriched_terms(pathfindR_results)
+term_gene_graph(pathfindR_results)
+#visualize_terms(pathfindR_results,RA_input)
+
+
+
+data_path<-as.data.frame(my.names_RF)
+data_path<-cbind(data_path,names_RF$logFC[rownames(names_RF) %in% my.symbols$probe_id])
+data_path<-cbind(data_path,names_RF$adj.P.Val[rownames(names_RF) %in% my.symbols$probe_id])
+dim(data_path)
+colnames(data_path)<-c("GENE", "CHANGE", "P_VALUE")
+head(data_path)
+RA_input<-data_path
+
+pathfindR_results <- run_pathfindR(RA_input, iterations = 1, gene_sets = "KEGG")
+pathfindR_cluster <- cluster_enriched_terms(pathfindR_results)
+term_gene_graph(pathfindR_results)
+#visualize_terms(pathfindR_results,RA_input)
+
+
+data_path<-as.data.frame(my.names_LASSO)
+data_path<-cbind(data_path,names_LASSO$logFC[rownames(names_LASSO) %in% my.symbols$probe_id])
+data_path<-cbind(data_path,names_LASSO$adj.P.Val[rownames(names_LASSO) %in% my.symbols$probe_id])
+dim(data_path)
+colnames(data_path)<-c("GENE", "CHANGE", "P_VALUE")
+head(data_path)
+RA_input<-data_path
+
+pathfindR_results <- run_pathfindR(RA_input, iterations = 1, gene_sets = "KEGG")
+pathfindR_cluster <- cluster_enriched_terms(pathfindR_results)
+term_gene_graph(pathfindR_results)
+#visualize_terms(pathfindR_results,RA_input)
+
+
+
+data_path<-as.data.frame(my.names_LDA)
+data_path<-cbind(data_path,names_LDA$logFC[rownames(names_LDA) %in% my.symbols$probe_id])
+data_path<-cbind(data_path,names_LDA$adj.P.Val[rownames(names_LDA) %in% my.symbols$probe_id])
+dim(data_path)
+colnames(data_path)<-c("GENE", "CHANGE", "P_VALUE")
+head(data_path)
+RA_input<-data_path
+
+pathfindR_results <- run_pathfindR(RA_input, iterations = 1, gene_sets = "KEGG")
+pathfindR_cluster <- cluster_enriched_terms(pathfindR_results)
+term_gene_graph(pathfindR_results)
+#visualize_terms(pathfindR_results,RA_input)
+
+
+
+data_path<-as.data.frame(my.names_RIDGE)
+data_path<-cbind(data_path,name_RIDGE$logFC[rownames(name_RIDGE) %in% my.symbols$probe_id])
+data_path<-cbind(data_path,name_RIDGE$adj.P.Val[rownames(name_RIDGE) %in% my.symbols$probe_id])
+dim(data_path)
+colnames(data_path)<-c("GENE", "CHANGE", "P_VALUE")
+head(data_path)
+RA_input<-data_path
+
+pathfindR_results <- run_pathfindR(RA_input, iterations = 1, gene_sets = "KEGG")
+pathfindR_cluster <- cluster_enriched_terms(pathfindR_results)
+term_gene_graph(pathfindR_results)
+#visualize_terms(pathfindR_results,RA_input)
+
+
+data_path<-as.data.frame(my.names_SCUDO)
+data_path<-cbind(data_path,names_SCUDO$logFC[rownames(names_SCUDO) %in% my.symbols$probe_id])
+data_path<-cbind(data_path,names_SCUDO$adj.P.Val[rownames(names_SCUDO) %in% my.symbols$probe_id])
+dim(data_path)
+colnames(data_path)<-c("GENE", "CHANGE", "P_VALUE")
+head(data_path)
+RA_input<-data_path
+
+pathfindR_results <- run_pathfindR(RA_input, iterations = 1, gene_sets = "KEGG")
+pathfindR_cluster <- cluster_enriched_terms(pathfindR_results)
+term_gene_graph(pathfindR_results)
+#visualize_terms(pathfindR_results,RA_input)
+
+```
+
+
+
+
+
